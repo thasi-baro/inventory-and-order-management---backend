@@ -39,8 +39,19 @@ const orderSchema = new mongoose.Schema(
       enum: ['pending', 'completed', 'cancelled'],
       default: 'pending',
     },
+    orderCode: {//Mã đơn hàng
+      type: String,
+      required: true,
+      unique: true,
+    },
+    customerInfo: { // Thông tin người mua
+      name: { type: String, required: true },
+      email: { type: String, required: true },
+      phone: { type: String, required: false },
+    },
   },
   { timestamps: true }
 );
-
+//Đánh chỉ mục 3 cột này vì chúng đc dùng nhiều để lấy dữ liệu dashboard
+orderSchema.index({ user: 1, createdAt: -1, status: 1 });
 export default mongoose.model('Order', orderSchema);
