@@ -1,8 +1,9 @@
 import express from 'express';
-import { authMe, test } from '../controllers/user.controller.js';
+import { authMe, updateUserSetting } from '../controllers/user.controller.js';
 
 const router = express.Router();
-
+//Lấy thông tin user đang đăng nhập
 router.get('/me', authMe);
-router.get('/test',test)
+//cập nhật username và threshold
+router.put('/', updateUserSetting)
 export default router;

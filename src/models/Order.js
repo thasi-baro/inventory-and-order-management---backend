@@ -1,7 +1,6 @@
 import mongoose from 'mongoose';
 
-
-// Schema con để nhúng vào Order (Đóng vai trò như bảng Order_Items)
+// Schema con để nhúng vào Order (Order_Items)
 const orderItemSchema = new mongoose.Schema({
   product: {
     type: mongoose.Schema.Types.ObjectId,
@@ -13,10 +12,10 @@ const orderItemSchema = new mongoose.Schema({
     required: true,
     min: [1, 'Số lượng mua phải lớn hơn 0'],
   },
+  // Lưu lại giá tại thời điểm mua để không bị ảnh hưởng nếu giá sản phẩm thay đổi sau này
   unit_price: {
     type: Number,
     required: true,
-    // Lưu lại giá tại thời điểm mua để không bị ảnh hưởng nếu giá sản phẩm thay đổi sau này
   },
 });
 
@@ -44,7 +43,7 @@ const orderSchema = new mongoose.Schema(
       required: true,
       unique: true,
     },
-    customerInfo: { // Thông tin người mua
+    customerInfo: { // Thông tin người mua để gửi mail
       name: { type: String, required: true },
       email: { type: String, required: true },
       phone: { type: String, required: false },

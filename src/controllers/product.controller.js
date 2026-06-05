@@ -1,6 +1,7 @@
 import Product from "../models/Product.js";
 import mongoose from "mongoose";
 import { redis } from '../config/redis.js'
+import User from "../models/User.js";
 /**
  * @desc    Tạo sản phẩm mới
  * @route   POST /api/products
@@ -41,7 +42,7 @@ export const createProduct = async (req, res) => {
 };
 
 /**
- * @desc    Lấy danh sách toàn bộ sản phẩm của user hiện tại
+ * @desc    Lấy danh sách toàn bộ sản phẩm của user hiện tại (phân trang và lọc theo giá cũng như trạng thái)
  * @route   GET /api/products
  * @param   {Object} req 
  * @param   {Object} res 
@@ -50,6 +51,9 @@ export const createProduct = async (req, res) => {
 export const getAllProducts = async (req, res) => {
     try {
         const userId = req.user._id;
+        //Lấy ngưỡng hết hàng mà user muốn
+        const currentUser = await User.findById(userId);
+        const threshold = currentUser.lowStockThreshold || 10;
         //Phân trang
         const page = parseInt(req.query.page) || 1;       // Mặc định trang 1
         const limit = parseInt(req.query.limit) || 5;     // Mặc định 5 sp/trang
@@ -66,9 +70,9 @@ export const getAllProducts = async (req, res) => {
 
         //Lọc theo trạng thái stock
         if (status === 'IN_STOCK') {
-            query.stock = { $gte: 10 }//Sl > 10
+            query.stock = { $gte: threshold }//Sl > threshold
         } else if (status === 'LOW_STOCK') {
-            query.stock = { $lt: 10, $gt: 0 }//sl >0 & < 10
+            query.stock = { $lt: threshold, $gt: 0 }//sl >0 & < threshold
         } else if (status === 'OUT_OF_STOCK') {
             query.stock = 0
         }
@@ -206,18 +210,21 @@ export const deleteProduct = async (req, res) => {
     }
 };
 /**
- * Đếm số lượng tổng và sản phẩm còn ít hơn 5
+ * Đếm số lượng tổng và sản phẩm còn ít hơn 10
  * @param {*} req 
  * @param {*} res 
- * @returns total và (stock < 5)
+ * @returns total và (stock < 10)
  */
 export const getTotalAndLowProduct = async (req, res) => {
     try {
         const userId = req.user._id;
-        //Lấy tổng và sản phẩm còn stock < 10
+        //Lấy ngưỡng hết hàng mà user tùy chỉnh
+        const currentUser = await User.findById(userId);
+        const threshold = currentUser.lowStockThreshold;
+        //Lấy tổng và sản phẩm còn stock < threshol
         const [totalProducts, lowStockProduct] = await Promise.all([
             Product.countDocuments({ user: userId }),//tổng sp
-            Product.countDocuments({ user: userId, stock: { $lt: 5, $gt: 0 } })//Lấy sl > 0 và < 5
+            Product.countDocuments({ user: userId, stock: { $lt: threshold, $gt: 0 } })//Lấy sl > 0 và < 10
         ]);
 
         res.status(200).json({

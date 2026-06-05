@@ -2,10 +2,13 @@ import Order from "../models/Order.js";
 import mongoose from "mongoose";
 import Product from "../models/Product.js";
 import { redis } from '../config/redis.js';
+import { sendOrderConfirmationEmail } from "../config/sendMail.js";
+import User from '../models/User.js'
 /**
- * @desc    Tạo đơn hàng mới (Đặt hàng) an toàn với Transaction
+ * @desc    Tạo đơn hàng mới (Đặt hàng) an toàn với Transaction (có gửi mail)
  * @route   POST /api/orders
  * @param   {Object} req - Chứa mảng items [{ product, quantity }]
+ * @returns {Object} order - Đơn  hàng vừa đặt 
  */
 export const createOrder = async (req, res) => {
     // Khởi tạo Transaction tránh cập nhật số lượng và bị lỗi 
@@ -71,18 +74,39 @@ export const createOrder = async (req, res) => {
 
         const order = newOrders[0]; // Lấy đơn hàng vừa tạo từ mảng trả về
 
-        // Trừ số lượng tồn kho
+
+        // Trừ số lượng tồn kho và lấy thông tin sản phẩm để gửi mail
+        const emailItemsDetails = []//Mảng chứa thông tin các sp để gửi mail
         for (const item of validOrderItems) {
-            await Product.findByIdAndUpdate(
+            //Trừ tồn kho
+            const updatedProduct = await Product.findByIdAndUpdate(
                 item.product,
                 { $inc: { stock: -item.quantity } },
                 { session, new: true }
             );
+            //Lấy tên sp
+            if (updatedProduct) {
+                emailItemsDetails.push({
+                    name: updatedProduct.name,
+                    quantity: item.quantity,
+                    price: item.unit_price
+                })
+            }
         }
+
+        // Thông tin đơn đặt hàng để gửi mail
+        const emailData = {
+            orderCode: order.orderCode || order._id,
+            customerName: customerInfo.name,
+            items: emailItemsDetails,
+            total_amount: total_amount
+        };
+
+        sendOrderConfirmationEmail(customerInfo.email, emailData); // Gửi mail cùng với dữ liệu vừa lấy được
 
         // Khôn có lỗi -> lưu mọi update Database
         await session.commitTransaction();
-        //Xóa dữ liệu redis hiện tại vì có thay đổi
+        //Xóa dữ liệu redis hiện tại vì có thay đổi để dashboard luôn có dữ liệu mới nhất
         await redis.del(`dashboard_stats_${userId}`);
 
         return res.status(201).json({ message: 'Đặt hàng thành công', order });
@@ -100,7 +124,7 @@ export const createOrder = async (req, res) => {
 };
 
 /**
- * @desc    Lấy lịch sử đơn hàng của user
+ * @desc    Lấy lịch sử đơn hàng của user (phân trang và lọc theo trạng thái)
  * @route   GET /api/orders
  * @returns Danh sách đơn hàng
  */
@@ -133,7 +157,7 @@ export const getAllOrders = async (req, res) => {
                 .sort({ createdAt: -1 })
                 .skip(skipIndex)
                 .limit(limit)
-                .lean(),
+                .lean(),//Do chỉ đọc nên dùng lean để tăng tốc độ
 
             Order.countDocuments(query)
         ])
@@ -159,37 +183,51 @@ export const getAllOrders = async (req, res) => {
 
 /**
  * @desc    Cập nhật trạng thái đơn hàng (Thường dùng để Hủy đơn)
- * @route   PUT /api/orders/:id/status
+ * @route   PATCH /api/orders/:id   
  * @returns Đơn hàng sau khi cập nhật
  */
 export const updateOrderStatus = async (req, res) => {
     try {
         const userId = req.user._id;
         const orderId = req.params.id;
-        //Kiểm tra định dạng order id tránh lỗi thiếu hoặc dư ký tự CastError trong Mongo
+
+        // Kiểm tra định dạng ID
         if (!mongoose.Types.ObjectId.isValid(orderId)) {
             return res.status(400).json({ message: 'Định dạng ID đơn hàng không hợp lệ' });
         }
-        const { newStatus } = req.body; // Chỉ nhận vào status mới (ví dụ: 'cancelled')
 
-        // Đảm bảo status gửi lên hợp lệ theo Enum trong DB
+        const { newStatus } = req.body;
         const validStatuses = ['pending', 'completed', 'cancelled'];
         if (!validStatuses.includes(newStatus)) {
             return res.status(400).json({ message: 'Trạng thái đơn hàng không hợp lệ' });
         }
 
-        const order = await Order.findOneAndUpdate(
-            { user: userId, _id: orderId },
-            { status: newStatus }, // Chỉ cho phép update cột status, không cho sửa sản phẩm/giá
-            { new: true, runValidators: true }
-        );
+        // Tìm đơn hàng
+        const order = await Order.findOne({ user: userId, _id: orderId });
 
         if (!order) {
             return res.status(404).json({ message: 'Không tìm thấy đơn hàng để cập nhật' });
         }
-        //Xóa dữ liệu redis hiện tại vì có thay đổi
-        await redis.del(`dashboard_stats_${userId}`);
+
+        // Hoàn số lượng: cộng lại số lượng sản phẩm trong kho khi đơn hàng bị hủy
+        if (newStatus === 'cancelled' && order.status !== 'cancelled') {
+            for (const item of order.items) {
+                const productId = item.product._id || item.product;
+
+                await Product.findOneAndUpdate(
+                    { _id: productId, user: userId },
+                    { $inc: { stock: item.quantity } }
+                );
+            }
+        }
+
+        order.status = newStatus;//Cập nhật trạng thái đơn hàng
+        await order.save(); //Lưu vào db
+
+        await redis.del(`dashboard_stats_${userId}`); //Xóa redis cache để dashboard luôn có dữ liệu mới nhất
+
         return res.status(200).json({ message: 'Cập nhật trạng thái thành công', order });
+
     } catch (error) {
         console.error('Lỗi khi gọi update order:', error);
         return res.status(500).json({ message: 'Lỗi hệ thống' });
@@ -219,14 +257,16 @@ const calculateRevenue = async (startDate, endDate, userId) => {
 };
 
 /**
- * @desc    
- * @route   GET /api/orders/:id
-*@returns Đơn hàng
+ * @desc  Lấy dữ liệu trang thống kê
+ * @route   GET /api/orders/stats
+*@returns Các biến thống kê
 */
 export const getStats = async (req, res) => {
     try {
         const userId = req.user._id;
-
+        //Lấy ngưỡng hết hàng mà user tùy chỉnh
+        const currentUser = await User.findById(userId);
+        const threshold = currentUser.lowStockThreshold;
         // Lưu dữ liệu vào Redis vì API mỗi lần gọi lấy dữ liệu lớn
         const cachedKey = `dashboard_stats_${userId}`
         //Tính doanh thu tháng và so với tháng trước
@@ -235,13 +275,13 @@ export const getStats = async (req, res) => {
         const startLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);//Ngày đầu tiên của tháng trước
         //Ngày cuối của tháng trước (0 của tháng hiện tại sẽ là ngày cuois tháng trước)
         const endLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-        //Lấy 7 ngày vừa qua
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(now.getDate() - 30);
+        //Lấy 30 ngày vừa qua
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(now.getDate() - 30);
 
-        //Lấy ngày và doanh thu của ngày đó trong 7 ngày vừa qua
-        const getRevenueOverTime = Order.aggregate([
-            { $match: { createdAt: { $gte: sevenDaysAgo }, status: "completed", user: userId } },
+        //Lấy ngày và doanh thu của ngày đó trong 30 ngày vừa qua với trạng thái những đơn đã completed
+        const getRevenueOverTime = await Order.aggregate([
+            { $match: { createdAt: { $gte: thirtyDaysAgo }, status: "completed", user: userId } },
             {
                 $group: {
                     // Gom nhóm theo định dạng ngày YYYY-MM-DD
@@ -249,11 +289,11 @@ export const getStats = async (req, res) => {
                     revenue: { $sum: "$total_amount" }
                 }
             },
-            { $sort: { _id: 1 } } // Sắp xếp theo ngày tăng dần để lên biểu đồ không bị ngược
+            { $sort: { _id: 1 } } // Sắp xếp theo ngày tăng dần 
         ]);
 
-        // 3. Lấy dữ liệu Biểu đồ Tròn (Order Status Breakdown)
-        const getOrderStatusBreakdown = Order.aggregate([
+        // Lấy dữ liệu Biểu đồ Tròn 
+        const getOrderStatusBreakdown = await Order.aggregate([
             { $match: { user: userId } },
             {
                 $group: {
@@ -262,8 +302,8 @@ export const getStats = async (req, res) => {
                 }
             }
         ]);
-        // 4. Lấy Top 5 Sản phẩm bán chạy nhất trong THÁNG NÀY (Top 5 Selling Products)
-        const getTopSellingProducts = Order.aggregate([
+        // Lấy Top 5 Sản phẩm bán chạy nhất trong tháng
+        const getTopSellingProducts = await Order.aggregate([
             // Chỉ lấy đơn hàng tháng này và không bị hủy
             { $match: { createdAt: { $gte: startThisMonth }, status: { $ne: "cancelled" }, user: userId } },
             // Tách mảng items ra thành từng dòng riêng biệt để dễ đếm
@@ -271,15 +311,15 @@ export const getStats = async (req, res) => {
             {
                 $group: {
                     _id: "$items.product", // Gom theo ID sản phẩm
-                    totalSold: { $sum: "$items.quantity" } // Cộng dồn số lượng bán ra
+                    totalSold: { $sum: { $toInt: "$items.quantity" } } // Cộng dồn số lượng bán ra
                 }
             },
             { $sort: { totalSold: -1 } }, // Sắp xếp bán nhiều nhất lên đầu
-            { $limit: 5 }, // Lấy đúng 5 mống
-            // JOIN với bảng Product để lấy cái Tên sản phẩm ra cho đẹp
+            { $limit: 5 }, //Lấy 5 sản phẩm
+            // JOIN với bảng Product để lấy tên product
             {
                 $lookup: {
-                    from: "products", // Lưu ý: Tên collection trong MongoDB (thường là số nhiều, viết thường)
+                    from: "products",
                     localField: "_id",
                     foreignField: "_id",
                     as: "productDetails"
@@ -294,21 +334,38 @@ export const getStats = async (req, res) => {
                 }
             }
         ]);
+
+        //Lấy số lượng sản phẩm tồn kho
+        const getInventoryHealth = await Product.aggregate([
+            { $match: { user: userId } },
+            {
+                $group: {
+                    _id: null,
+                    inStock: { $sum: { $cond: [{ $gt: ["$stock", threshold] }, 1, 0] } },
+                    lowStock: { $sum: { $cond: [{ $and: [{ $gt: ["$stock", 0] }, { $lte: ["$stock", threshold] }] }, 1, 0] } },
+                    outOfStock: { $sum: { $cond: [{ $eq: ["$stock", 0] }, 1, 0] } }
+                }
+            }
+        ]);
         //Chạy song song các lệnh gọi xuống db để tối ưu hiệu suất
         const [
             thisMonthRevenue,
             lastMonthRevenue,
             totalOrders,
+            totalProducts,
             revenueOverTimeData,
             statusBreakdownData,
-            topProductsData
+            topProductsData,
+            inventoryHealth
         ] = await Promise.all([
             calculateRevenue(startThisMonth, now, userId),
             calculateRevenue(startLastMonth, endLastMonth, userId),
             Order.countDocuments({ user: userId }),
+            Product.countDocuments({ user: userId }),
             getRevenueOverTime,
             getOrderStatusBreakdown,
-            getTopSellingProducts
+            getTopSellingProducts,
+            getInventoryHealth
         ]);
 
         //Tính phần trăm tăng/giảm
@@ -320,18 +377,24 @@ export const getStats = async (req, res) => {
         }
         percentage = Math.round(percentage * 100) / 100 //Làm tròn 2 chữ số thập phân
 
-
+        //format dữ liệu status để fe dễ xử lí
         const formattedStatus = statusBreakdownData.reduce((acc, curr) => {
             acc[curr._id] = curr.count;
             return acc;
         }, { pending: 0, completed: 0, cancelled: 0 });
+        //format dữ liệu inventory để fe dễ xử lí
+        const formattedInventoryHealth = inventoryHealth.length > 0
+            ? inventoryHealth[0]
+            : { inStock: 0, lowStock: 0, outOfStock: 0 }
         const data = {
             totalOrders,
+            totalProducts,
             thisMonthRevenue,
             percentage,
-            revenueOverTime: revenueOverTimeData, // Trả về dạng: [ { _id: "2026-06-01", revenue: 1500 }, ... ]
-            orderStatusBreakdown: formattedStatus, // Trả về dạng: { pending: 15, completed: 80, cancelled: 5 }
-            topProducts: topProductsData           // Trả về dạng: [ { name: "MacBook", totalSold: 12 }, ... ]
+            revenueOverTime: revenueOverTimeData, // return: [ { _id: "2026-06-01", revenue: 1500 }, ... ]
+            orderStatusBreakdown: formattedStatus, // return: { pending: 15, completed: 80, cancelled: 5 }
+            topProducts: topProductsData,           // return: [ { name: "MacBook", totalSold: 12 }, ... ]
+            inventoryHealth: formattedInventoryHealth // return: {_id, inStock: 5, lowStock: 0, outOfStock: 2}
         }
 
         //Luư dữ liệu vào Redis nếu ko có lỗi, ex:300 (5 phút)

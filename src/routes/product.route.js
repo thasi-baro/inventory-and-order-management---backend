@@ -3,10 +3,11 @@ import { createProduct, deleteProduct, getAllProducts, getProduct, getTotalAndLo
 import { upload } from '../config/cloudinary.js';
 const router = express.Router();
 
-router.post('/',upload.single('image'),createProduct);
-router.get('/',getAllProducts);
-router.get('/count',getTotalAndLowProduct);
-router.get('/:id',getProduct);
-router.put('/:id',upload.single('image'),updateProduct);
-router.delete('/:id',deleteProduct);
+//single để upload trường image lên cloudinary
+router.post('/', upload.single('image'), createProduct);
+router.get('/', getAllProducts);
+router.get('/count', getTotalAndLowProduct);
+router.get('/:id', getProduct);
+router.put('/:id', upload.single('image'), updateProduct);
+router.delete('/:id', deleteProduct);
 export default router;

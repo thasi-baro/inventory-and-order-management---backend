@@ -21,7 +21,7 @@ app.use(cors({ origin: process.env.CLIENT_URL, credentials: true })); // kết n
 app.use('/api/auth', authRoute)
 
 //private routes
-app.use(protectedRoute)
+app.use(protectedRoute)//Các route phía dưới điều phải qua route này (bắt buộc đã đăng nhập rồi)
 app.use('/api/users', userRoute);
 app.use('/api/products', productRoute)
 app.use('/api/orders', orderRoute)
