@@ -5,34 +5,36 @@ dotenv.config();
 
 // Cấu hình transporter 
 const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-    },
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true, // Dùng SSL/TLS để gửi mail đc khi deploy
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
 });
 
 // Hàm gửi mail xác nhận đơn hàng
 export const sendOrderConfirmationEmail = async (customerEmail, orderData) => {
-    try {
-        //Tạo danh sách sản phẩm dưới dạng bảng HTML
-        const itemsHTML = orderData.items
-            .map(
-                (item) => `
+  try {
+    //Tạo danh sách sản phẩm dưới dạng bảng HTML
+    const itemsHTML = orderData.items
+      .map(
+        (item) => `
         <tr>
           <td style="padding: 10px; border-bottom: 1px solid #ddd;">${item.name || "Sản phẩm"}</td>
           <td style="padding: 10px; border-bottom: 1px solid #ddd; text-align: center;">${item.quantity}</td>
           <td style="padding: 10px; border-bottom: 1px solid #ddd; text-align: right;">${item.price?.toLocaleString("vi-VN")}đ</td>
         </tr>
       `
-            )
-            .join("");
+      )
+      .join("");
 
-        const mailOptions = {
-            from: `"Cửa hàng của Bảo" <${process.env.EMAIL_USER}>`,
-            to: customerEmail,
-            subject: `Xác nhận đơn hàng #${orderData.orderCode || orderData._id} thành công!`,
-            html: `
+    const mailOptions = {
+      from: `"Cửa hàng của Bảo" <${process.env.EMAIL_USER}>`,
+      to: customerEmail,
+      subject: `Xác nhận đơn hàng #${orderData.orderCode || orderData._id} thành công!`,
+      html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
           <h2 style="color: #10B981; text-align: center;">Cảm ơn bạn đã đặt hàng</h2>
           <p>Xin chào <strong>${orderData.customerName || "quý khách"}</strong>,</p>
@@ -70,12 +72,12 @@ export const sendOrderConfirmationEmail = async (customerEmail, orderData) => {
           </p>
         </div>
       `,
-        };
+    };
 
-        // Gửi mail
-        await transporter.sendMail(mailOptions);
-        console.log(`Đã gửi email xác nhận tới: ${customerEmail}`);
-    } catch (error) {
-        console.error("Lỗi khi gửi email:", error);
-    }
+    // Gửi mail
+    await transporter.sendMail(mailOptions);
+    console.log(`Đã gửi email xác nhận tới: ${customerEmail}`);
+  } catch (error) {
+    console.error("Lỗi khi gửi email:", error);
+  }
 };
