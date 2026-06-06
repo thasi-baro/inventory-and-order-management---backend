@@ -8,7 +8,6 @@ import userRoute from './routes/user.route.js'
 import { protectedRoute } from './middleware/auth.middleware.js';
 import productRoute from './routes/product.route.js'
 import orderRoute from './routes/order.route.js';
-
 const app = express();
 const PORT = process.env.PORT || 5001
 
@@ -23,7 +22,7 @@ app.use('/api/auth', authRoute)
 //private routes
 app.use(protectedRoute)//Các route phía dưới điều phải qua route này (bắt buộc đã đăng nhập rồi)
 app.use('/api/users', userRoute);
-app.use('/api/products', productRoute)
+app.use('/api/products', productRoute);
 app.use('/api/orders', orderRoute)
 //kết nối db
 connectDB().then(() => {//kết nối DB

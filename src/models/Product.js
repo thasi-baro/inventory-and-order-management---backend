@@ -30,6 +30,11 @@ const productSchema = new mongoose.Schema(
       type: String,
       default: '', // Đường dẫn ảnh từ Cloudinary
     },
+    category: {//Danh mục sản phẩm
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Category",
+      required: [true, "Sản phẩm phải thuộc một danh mục"]
+    },
   },
   { timestamps: true }
 );
