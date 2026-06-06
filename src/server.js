@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 5001
 //middleware
 app.use(express.json()); //sử dụng json
 app.use(cookieParser());//đọc cookie
-app.use(cors({ origin: process.env.CLIENT_URL, credentials: true })); // kết nối với fe
+app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173', credentials: true })); // kết nối với fe
 
 //public routes
 app.use('/api/auth', authRoute)
